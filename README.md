@@ -1,6 +1,7 @@
 # Livedb REST Frontend
 
 This repository provides a simple REST API for livedb via an express router.
+[![Build Status](https://travis-ci.org/share/rest.svg)](https://travis-ci.org/share/rest)
 
 For example:
 
