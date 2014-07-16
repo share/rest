@@ -1,0 +1,32 @@
+{
+  "name": "livedb-rest",
+  "version": "0.8.0",
+  "description": "REST API for Livedb / ShareJS",
+  "main": "rest.js",
+  "dependencies": {
+    "express": "~4.6.1"
+  },
+  "devDependencies": {
+    "coffee-script": "^1.7.1",
+    "ottypes": "~1.0.2"
+  },
+  "scripts": {
+    "test": "mocha --compilers coffee:coffee-script/register --reporter spec test.coffee"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git://github.com/share/rest.git"
+  },
+  "keywords": [
+    "sharejs",
+    "livedb",
+    "rest",
+    "api"
+  ],
+  "author": "Joseph Gentle <me@josephg.com>",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/share/rest/issues"
+  },
+  "homepage": "https://github.com/share/rest"
+}
