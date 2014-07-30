@@ -8,8 +8,10 @@
   },
   "devDependencies": {
     "coffee-script": "^1.7.1",
-    "ottypes": "~1.0.2",
-    "mocha": "^1.20.1"
+    "mocha": "^1.20.1",
+    "livedb": "^0.4.4",
+    "ot-text": "^1.0.1",
+    "ot-simple": "^1.0.0"
   },
   "scripts": {
     "test": "mocha --compilers coffee:coffee-script/register --reporter spec test.coffee"

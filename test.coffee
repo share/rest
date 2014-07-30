@@ -5,8 +5,13 @@ http = require 'http'
 
 rest = require './rest.js'
 
-ottypes = require 'ottypes'
+# A bit of variety
+otSimple = require('ot-simple').type
+otText = require('ot-text').type
+
 express = require 'express'
+
+livedb = require 'livedb'
 
 # Async fetch. Aggregates whole response and sends to callback.
 # Callback should be function(response, data) {...}
@@ -33,6 +38,19 @@ fetch = (method, port, path, postData, extraHeaders, callback) ->
 
   request.end()
 
+writeOps = (db, cName, docName, ops, index = 0, callback) ->
+  if typeof index is 'function'
+    [index, callback] = [0, index]
+
+  if index >= ops.length
+    return callback()
+
+  op = ops[index]
+  db.writeOp cName, docName, op, (err) ->
+    return callback(err) if err
+    # Recurse.
+    writeOps db, cName, docName, ops, index+1, callback
+
 # Frontend tests
 describe 'rest', ->
   beforeEach (done) ->
@@ -40,22 +58,20 @@ describe 'rest', ->
     @doc = '__doc'
 
     # Tests fill this in to provide expected backend functionality
-    @docs = {}
-    @ops = {}
-    @backend =
-      fetch: (cName, docName, callback) => callback null, @docs[cName]?[docName] ? {v:0}
-      getOps: (cName, docName, start, end, callback) =>
-        ops = @ops[cName]?[docName] ? []
-        start = 0 if start < 0
-
-        if end is null
-          callback null, ops.slice start
-        else
-          return callback null, [] if end <= start
-          callback null, ops.slice start, start + end
+    @db = livedb.memory()
+    @backend = livedb.client @db
+    @middleware = require('livedb-middleware') @backend
 
     app = express()
-    app.use '/doc', rest @backend
+    app.use '/doc', rest @middleware
+
+    # Used by the connect middleware below.
+    app.use (err, req, res, next) ->
+      if err.message is 'Forbidden'
+        res.send 403, 'Forbidden'
+      else
+        next err
+
     @port = 4321
     @server = http.createServer app
     @server.listen @port, done
@@ -64,16 +80,16 @@ describe 'rest', ->
     @server.on 'close', done
     @server.close()
 
-  describe 'GET/HEAD', ->
+  describe 'GET & HEAD', ->
     it 'returns 404 for nonexistant documents', (done) ->
-      fetch 'GET', @port, "/doc/#{@collection}/#{@name}", null, (res, data, headers) ->
+      fetch 'GET', @port, "/doc/#{@collection}/#{@doc}", null, (res, data, headers) ->
         assert.strictEqual res.statusCode, 404
         assert.strictEqual headers['x-ot-version'], '0'
         assert.equal headers['x-ot-type'], null
         done()
         
     it 'return 404 and empty body when on HEAD on a nonexistant document', (done) ->
-      fetch 'HEAD', @port, "/doc/#{@collection}/#{@name}", null, (res, data, headers) ->
+      fetch 'HEAD', @port, "/doc/#{@collection}/#{@doc}", null, (res, data, headers) ->
         assert.strictEqual res.statusCode, 404
         assert.strictEqual data, ''
         assert.strictEqual headers['x-ot-version'], '0'
@@ -81,103 +97,97 @@ describe 'rest', ->
         done()
     
     it 'returns 200, empty body, version and type when on HEAD on a document', (done) ->
-      @docs.c = {}
-      @docs.c.d = {v:1, type:ottypes.text.uri, data:'hi there'}
+      @db.writeSnapshot 'c', 'd', {v:1, type:otText.uri, data:'hi there'}, =>
 
-      fetch 'HEAD', @port, "/doc/c/d", null, (res, data, headers) ->
-        assert.strictEqual res.statusCode, 200
-        assert.strictEqual headers['x-ot-version'], '1'
-        assert.strictEqual headers['x-ot-type'], ottypes.text.uri
-        assert.ok headers['etag']
-        assert.strictEqual data, ''
-        done()
+        fetch 'HEAD', @port, "/doc/c/d", null, (res, data, headers) ->
+          assert.strictEqual res.statusCode, 200
+          assert.strictEqual headers['x-ot-version'], '1'
+          assert.strictEqual headers['x-ot-type'], otText.uri
+          assert.ok headers['etag']
+          assert.strictEqual data, ''
+          done()
             
     it 'document returns the document snapshot', (done) ->
-      @docs.c = {}
-      @docs.c.d = {v:1, type:ottypes.simple.uri, data:{str:'Hi'}}
+      @db.writeSnapshot 'c', 'd', {v:1, type:otSimple.uri, data:{str:'Hi'}}, =>
 
-      fetch 'GET', @port, "/doc/c/d", null, (res, data, headers) ->
-        assert.strictEqual res.statusCode, 200
-        assert.strictEqual headers['x-ot-version'], '1'
-        assert.strictEqual headers['x-ot-type'], ottypes.simple.uri
-        assert.ok headers['etag']
-        assert.strictEqual headers['content-type'], 'application/json'
-        assert.deepEqual data, {str:'Hi'}
-        done()
+        fetch 'GET', @port, "/doc/c/d", null, (res, data, headers) ->
+          assert.strictEqual res.statusCode, 200
+          assert.strictEqual headers['x-ot-version'], '1'
+          assert.strictEqual headers['x-ot-type'], otSimple.uri
+          assert.ok headers['etag']
+          assert.strictEqual headers['content-type'], 'application/json'
+          assert.deepEqual data, {str:'Hi'}
+          done()
 
     it 'document returns the entire document structure when envelope=true', (done) ->
-      @docs.c = {}
-      @docs.c.d = {v:1, type:ottypes.simple.uri, data:{str:'Hi'}}
+      @db.writeSnapshot 'c', 'd', {v:1, type:otSimple.uri, data:{str:'Hi'}}, =>
 
-      fetch 'GET', @port, "/doc/c/d?envelope=true", null, (res, data, headers) ->
-        assert.strictEqual res.statusCode, 200
-        assert.strictEqual headers['x-ot-version'], '1'
-        assert.strictEqual headers['x-ot-type'], ottypes.simple.uri
-        assert.strictEqual headers['content-type'], 'application/json'
-        assert.deepEqual data, {v:1, type:ottypes.simple.uri, data:{str:'Hi'}}
-        done()
+        fetch 'GET', @port, "/doc/c/d?envelope=true", null, (res, data, headers) ->
+          assert.strictEqual res.statusCode, 200
+          assert.strictEqual headers['x-ot-version'], '1'
+          assert.strictEqual headers['x-ot-type'], otSimple.uri
+          assert.strictEqual headers['content-type'], 'application/json'
+          assert.deepEqual data, {v:1, type:otSimple.uri, data:{str:'Hi'}}
+          done()
 
     it 'a plaintext document is returned as a string', (done) ->
-      @docs.c = {}
-      @docs.c.d = {v:1, type:ottypes.text.uri, data:'hi'}
+      @db.writeSnapshot 'c', 'd', {v:1, type:otText.uri, data:'hi'}, =>
 
-      fetch 'GET', @port, "/doc/c/d", null, (res, data, headers) ->
-        assert.strictEqual res.statusCode, 200
-        assert.strictEqual headers['x-ot-version'], '1'
-        assert.strictEqual headers['x-ot-type'], ottypes.text.uri
-        assert.ok headers['etag']
-        assert.strictEqual headers['content-type'], 'text/plain'
-        assert.deepEqual data, 'hi'
-        done()
+        fetch 'GET', @port, "/doc/c/d", null, (res, data, headers) ->
+          assert.strictEqual res.statusCode, 200
+          assert.strictEqual headers['x-ot-version'], '1'
+          assert.strictEqual headers['x-ot-type'], otText.uri
+          assert.ok headers['etag']
+          assert.strictEqual headers['content-type'], 'text/plain'
+          assert.deepEqual data, 'hi'
+          done()
 
     it 'ETag is the same between responses', (done) ->
-      @docs.c = {}
-      @docs.c.d = {v:1, type:ottypes.text.uri, data:'hi'}
+      @db.writeSnapshot 'c', 'd', {v:1, type:otText.uri, data:'hi'}, =>
 
-      fetch 'GET', @port, "/doc/c/d", null, (res, data, headers) =>
-        tag = headers['etag']
+        fetch 'GET', @port, "/doc/c/d", null, (res, data, headers) =>
+          tag = headers['etag']
 
-        # I don't care what the etag is, but if I fetch it again it should be the same.
-        fetch 'GET', @port, "/doc/c/d", null, (res, data, headers) ->
-          assert.strictEqual headers['etag'], tag
-          done()
+          # I don't care what the etag is, but if I fetch it again it should be the same.
+          fetch 'GET', @port, "/doc/c/d", null, (res, data, headers) ->
+            assert.strictEqual headers['etag'], tag
+            done()
 
     it 'ETag changes when version changes', (done) ->
-      @docs.c = {}
-      @docs.c.d = {v:1, type:ottypes.text.uri, data:'hi'}
+      @db.writeSnapshot 'c', 'd', {v:1, type:otText.uri, data:'hi'}, =>
 
-      fetch 'GET', @port, "/doc/c/d", null, (res, data, headers) =>
-        tag = headers['etag']
-        @docs.c.d.v = 2
         fetch 'GET', @port, "/doc/c/d", null, (res, data, headers) =>
-          assert.notStrictEqual headers['etag'], tag
-          done()
+          tag = headers['etag']
+          @backend.submit 'c', 'd', {v:1, op:['x']}, =>
+            fetch 'GET', @port, "/doc/c/d", null, (res, data, headers) =>
+              assert.notStrictEqual headers['etag'], tag
+              done()
 
 
   describe 'GET /ops', ->
     it 'returns ops', (done) ->
-      @ops.c = {}
-      ops = @ops.c.d = [{v:0, create:{type:ottypes.text.uri}}, {v:1, op:[]}, {v:2, op:[]}]
-      fetch 'GET', @port, '/doc/c/d/ops', null, (res, data, headers) ->
-        assert.strictEqual res.statusCode, 200
-        assert.deepEqual data, ops
-        done()
+      ops = [{v:0, create:{type:otText.uri}}, {v:1, op:[]}, {v:2, op:[]}]
+      writeOps @db, 'c', 'd', ops, =>
+        fetch 'GET', @port, '/doc/c/d/ops', null, (res, data, headers) ->
+          assert.strictEqual res.statusCode, 200
+          assert.deepEqual data, ops
+          done()
 
     it 'limits FROM based on query parameter', (done) ->
-      @ops.c = {}
-      ops = @ops.c.d = [{v:0, create:{type:ottypes.text.uri}}, {v:1, op:[]}, {v:2, op:[]}]
-      fetch 'GET', @port, '/doc/c/d/ops?to=2', null, (res, data, headers) ->
-        assert.strictEqual res.statusCode, 200
-        assert.deepEqual data, [ops[0], ops[1]]
-        done()
+      ops = [{v:0, create:{type:otText.uri}}, {v:1, op:[]}, {v:2, op:[]}]
+      writeOps @db, 'c', 'd', ops, =>
+        fetch 'GET', @port, '/doc/c/d/ops?to=2', null, (res, data, headers) ->
+          assert.strictEqual res.statusCode, 200
+          assert.deepEqual data, [ops[0], ops[1]]
+          done()
 
     it 'limits TO based on query parameter', (done) ->
-      @ops.c = {}
-      ops = @ops.c.d = [{v:0, create:{type:ottypes.text.uri}}, {v:1, op:[]}, {v:2, op:[]}]
-      fetch 'GET', @port, '/doc/c/d/ops?from=1', null, (res, data, headers) ->
-        assert.strictEqual res.statusCode, 200
-        assert.deepEqual data, [ops[1], ops[2]]
-        done()
+      ops = [{v:0, create:{type:otText.uri}}, {v:1, op:[]}, {v:2, op:[]}]
+      writeOps @db, 'c', 'd', ops, =>
+        fetch 'GET', @port, '/doc/c/d/ops?from=1', null, (res, data, headers) ->
+          assert.strictEqual res.statusCode, 200
+          assert.deepEqual data, [ops[1], ops[2]]
+          done()
 
     it 'returns empty list for nonexistant document', (done) ->
       fetch 'GET', @port, '/doc/c/d/ops', null, (res, data, headers) ->
@@ -240,109 +250,31 @@ describe 'rest', ->
         done()
     
 
-  # Tests past this line haven't been rewritten yet for the new API.
+  describe 'with middleware', ->
+    describe 'disallowing connections', ->
+      beforeEach ->
+        @middleware.use 'connect', (action, callback) ->
+          assert.equal action.action, 'connect'
+          assert action.req.socket.remoteAddress in ['localhost', '127.0.0.1'] # Is there a nicer way to do this?
 
-###
-  'Cannot do anything if the server doesnt allow client connections': (test) ->
-    @auth = (agent, action) ->
-      assert.strictEqual action.type, 'connect'
-      test.ok agent.remoteAddress in ['localhost', '127.0.0.1'] # Is there a nicer way to do this?
-      assert.strictEqual typeof agent.sessionId, 'string'
-      test.ok agent.sessionId.length > 5
-      test.ok agent.connectTime
+          # This is added in fetch() above
+          assert.strictEqual action.req.headers['x-testing'], 'booyah'
 
-      assert.strictEqual typeof agent.headers, 'object'
+          callback 'Forbidden'
 
-      # This is added above
-      assert.strictEqual agent.headers['x-testing'], 'booyah'
-
-      action.reject()
-
-    passPart = makePassPart test, 7
-    checkResponse = (res, data) ->
-      assert.strictEqual(res.statusCode, 403)
-      assert.deepEqual data, 'Forbidden'
-      passPart()
-
-    # Non existant document
-    doc1 = newDocName()
-
-    # Get
-    fetch 'GET', @port, "/doc/#{doc1}", null, checkResponse
-
-    # Create
-    fetch 'PUT', @port, "/doc/#{doc1}", {type:'simple'}, checkResponse
-
-    # Submit an op to a nonexistant doc
-    fetch 'POST', @port, "/doc/#{doc1}?v=0", {position: 0, text: 'Hi'}, checkResponse
-
-    # Existing document
-    doc2 = newDocName()
-    @model.create doc2, 'simple', =>
-      @model.applyOp doc2, {v:0, op:{position: 0, text: 'Hi'}}, =>
-        fetch 'GET', @port, "/doc/#{doc2}", null, checkResponse
-    
-        # Create an existing document
-        fetch 'PUT', @port, "/doc/#{doc2}", {type:'simple'}, checkResponse
-
-        # Submit an op to an existing document
-        fetch 'POST', @port, "/doc/#{doc2}?v=0", {position: 0, text: 'Hi'}, checkResponse
-
-        # Delete a document
-        fetch 'DELETE', @port, "/doc/#{doc2}", null, checkResponse
-
-  "Can't GET if read is rejected": (test) ->
-    @auth = (client, action) -> if action.type == 'read' then action.reject() else action.accept()
-
-    @model.create @name, 'simple', =>
-      @model.applyOp @name, {v:0, op:{position: 0, text: 'Hi'}}, =>
-        fetch 'GET', @port, "/doc/#{@name}", null, (res, data) ->
-          assert.strictEqual(res.statusCode, 403)
-          assert.deepEqual data, 'Forbidden'
-          done()
-
-  "Can't PUT if create is rejected": (test) ->
-    @auth = (client, action) -> if action.type == 'create' then action.reject() else action.accept()
-
-    fetch 'PUT', @port, "/doc/#{@name}", {type:'simple'}, (res, data) =>
-      assert.strictEqual res.statusCode, 403
-      assert.deepEqual data, 'Forbidden'
-
-      @model.getSnapshot @name, (error, doc) ->
-        test.equal doc, null
+      checkResponse = (done) -> (res, data) ->
+        #console.log res.statusCode, res.headers, res.body
+        assert.strictEqual(res.statusCode, 403)
+        assert.deepEqual data, 'Forbidden'
         done()
 
-  "Can't POST if submit op is rejected": (test) ->
-    @auth = (client, action) -> if action.type == 'update' then action.reject() else action.accept()
+      it "can't get", (done) ->
+        fetch 'GET', @port, "/doc/c/d", null, checkResponse(done)
 
-    @model.create @name, 'simple', =>
-      fetch 'POST', @port, "/doc/#{@name}?v=0", {position: 0, text: 'Hi'}, (res, data) =>
-        assert.strictEqual res.statusCode, 403
-        assert.deepEqual data, 'Forbidden'
+      it "can't create", (done) ->
+        fetch 'PUT', @port, "/doc/c/d", {create:{type:'simple'}, v:0}, checkResponse(done)
 
-        # & Check the document is unchanged
-        @model.getSnapshot @name, (error, doc) ->
-          assert.deepEqual doc, {v:0, type:types.simple, snapshot:{str:''}, meta:{}}
-          done()
+      it "can't submit an op", (done) ->
+        # Submit an op to a nonexistant doc
+        fetch 'POST', @port, "/doc/c/d", {op:{position: 0, text: 'Hi'}, v:0}, checkResponse(done)
 
-  'A Forbidden DELETE on a nonexistant document returns 403': (test) ->
-    @auth = (client, action) -> if action.type == 'delete' then action.reject() else action.accept()
-
-    fetch 'DELETE', @port, "/doc/#{@name}", null, (res, data) ->
-      assert.strictEqual res.statusCode, 403
-      assert.deepEqual data, 'Forbidden'
-      done()
-
-  "Can't DELETE if delete is rejected": (test) ->
-    @auth = (client, action) -> if action.type == 'delete' then action.reject() else action.accept()
-
-    @model.create @name, 'simple', =>
-      fetch 'DELETE', @port, "/doc/#{@name}", null, (res, data) =>
-        assert.strictEqual res.statusCode, 403
-        assert.deepEqual data, 'Forbidden'
-
-        @model.getSnapshot @name, (error, doc) ->
-          test.ok doc
-          done()
-
-###

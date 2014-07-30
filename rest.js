@@ -116,6 +116,9 @@ module.exports = function(backend) {
         if (req.session) req.session.shareAgent = agent;
 
         agent.connect(null, req, function(err) {
+          if (err && typeof err === 'string')
+            err = Error(err);
+
           next(err);
         });
       } else {
