@@ -255,10 +255,10 @@ describe 'rest', ->
       beforeEach ->
         @middleware.use 'connect', (action, callback) ->
           assert.equal action.action, 'connect'
-          assert action.req.socket.remoteAddress in ['localhost', '127.0.0.1'] # Is there a nicer way to do this?
+          assert action.initialReq.socket.remoteAddress in ['localhost', '127.0.0.1', '::ffff:127.0.0.1'] # Is there a nicer way to do this?
 
           # This is added in fetch() above
-          assert.strictEqual action.req.headers['x-testing'], 'booyah'
+          assert.strictEqual action.initialReq.headers['x-testing'], 'booyah'
 
           callback 'Forbidden'
 
