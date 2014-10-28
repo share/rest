@@ -2,6 +2,7 @@
 
 assert = require 'assert'
 http = require 'http'
+querystring = require 'querystring'
 
 rest = require './rest.js'
 
@@ -61,6 +62,12 @@ describe 'rest', ->
     @db = livedb.memory()
     @backend = livedb.client @db
     @middleware = require('livedb-middleware') @backend
+
+    useLivedbMongo = false
+    if useLivedbMongo
+      @db = require('livedb-mongo')('mongodb://localhost:27017/test?auto_reconnect', safe: false)
+      @backend = livedb.client @db
+      @middleware = require('livedb-middleware') @backend
 
     app = express()
     app.use '/doc', rest @middleware
@@ -278,3 +285,75 @@ describe 'rest', ->
         # Submit an op to a nonexistant doc
         fetch 'POST', @port, "/doc/c/d", {op:{position: 0, text: 'Hi'}, v:0}, checkResponse(done)
 
+
+  describe 'GET /collection', ->
+    # test bellow works only with livedb-mongo adapter
+
+    beforeEach (done) ->
+      @db.writeSnapshot @collection, 'iphone6', {v:1, type:otSimple.uri, data:{price: 199, active: true}}, (err)=>
+        @db.writeSnapshot @collection, 'iphone6plus', {v:1, type:otSimple.uri, data:{price: 299, active: true}}, (err)=>
+          @db.writeSnapshot @collection, 'iphone5s', {v:1, type:otSimple.uri, data:{price: 99, active: false}}, (err)=>
+            @db.writeSnapshot @collection, 'iphone5c', {v:1, type:otSimple.uri, data:{price: 0, active: false}}, (err)=>
+              done()
+
+    it 'returns list of all documents', (done) ->
+      fetch 'GET', @port, "/doc/#{@collection}", null, (res, data, headers) =>
+        assert.strictEqual res.statusCode, 200
+        assert.strictEqual headers['content-type'], 'application/json'
+        docNames = data.map (doc)-> doc.docName
+        assert.deepEqual docNames, ['iphone6', 'iphone6plus', 'iphone5s', 'iphone5c']
+        done()
+
+    it 'returns 400 if invalid JSON in q option', (done) ->
+      query = 'invalid>{json'
+      fetch 'GET', @port, "/doc/#{@collection}?q=#{query}", null, (res, data, headers) =>
+        assert.strictEqual res.statusCode, 400
+        done()
+
+    it 'returns 400 if invalid JSON in s option', (done) ->
+      sort = 'invalid>{json'
+      fetch 'GET', @port, "/doc/#{@collection}?s=#{sort}", null, (res, data, headers) =>
+        assert.strictEqual res.statusCode, 400
+        done()
+
+    it 'returns list of documents based on query', (done) ->
+      # works only with livedb-mongo adapter
+
+      query = querystring.escape('{"active": true}')
+      fetch 'GET', @port, "/doc/#{@collection}?q=#{query}", null, (res, data, headers) =>
+        assert.strictEqual res.statusCode, 200
+        assert.strictEqual headers['content-type'], 'application/json'
+        docNames = data.map (doc)-> doc.docName
+        assert.deepEqual docNames, ['iphone6', 'iphone6plus']
+        done()
+
+    it 'returns sorted list of documents', (done) ->
+      # works only with livedb-mongo adapter
+
+      sort = querystring.escape('{"price": 1}')
+      fetch 'GET', @port, "/doc/#{@collection}?s=#{sort}", null, (res, data, headers) =>
+        assert.strictEqual res.statusCode, 200
+        assert.strictEqual headers['content-type'], 'application/json'
+        docNames = data.map (doc)-> doc.docName
+        assert.deepEqual docNames, ['iphone5c', 'iphone5s', 'iphone6', 'iphone6plus']
+        done()
+
+    it 'returns limited list of documents, with skip', (done) ->
+      # works only with livedb-mongo adapter
+
+      sort = querystring.escape('{"price": 1}')
+      fetch 'GET', @port, "/doc/#{@collection}?s=#{sort}&sk=1&l=3", null, (res, data, headers) =>
+        assert.strictEqual res.statusCode, 200
+        assert.strictEqual headers['content-type'], 'application/json'
+        docNames = data.map (doc)-> doc.docName
+        assert.deepEqual docNames, ['iphone5s', 'iphone6', 'iphone6plus']
+        done()
+
+    it 'returns count of documents', (done) ->
+      # works only with livedb-mongo adapter
+
+      fetch 'GET', @port, "/doc/#{@collection}?c=true", null, (res, data, headers) =>
+        assert.strictEqual res.statusCode, 200
+        assert.strictEqual headers['content-type'], 'application/json'
+        assert.equal data, '4'
+        done()
