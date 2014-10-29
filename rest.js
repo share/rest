@@ -167,7 +167,9 @@ module.exports = function(backend) {
     // count
     if (query.c == 'true') fetchQuery.$count = true;
 
-    req._shareAgent.queryFetch(req.params.cName, fetchQuery, {docMode: 'fetch'}, function(err, results, extra) {
+    var fetchOptions = {docMode: 'fetch'};
+    var cName = req.params.cName;
+    req._shareAgent.queryFetch(cName, fetchQuery, fetchOptions, function(err, results, extra) {
       if (err) {
         if (req.method === "HEAD") {
           sendError(res, err, true);
@@ -183,12 +185,32 @@ module.exports = function(backend) {
         return;
       }
 
+      var contents = {
+        meta: {
+          limit: fetchQuery.$limit || null,
+          offset: fetchQuery.$skip || 0,
+          total_count: extra || results.length
+        }
+      };
+
+      // return only meta
       if (query.c) {
-        // return only count
-        sendJSON(res, extra);
+        sendJSON(res, contents);
+        return;
       } else {
-        sendJSON(res, results);
+        contents.objects = results;
       }
+
+      if (fetchQuery.$limit || fetchQuery.$skip) {
+        fetchQuery.$count = true;
+        req._shareAgent.queryFetch(cName, fetchQuery, fetchOptions, function(err, results, extra) {
+          contents.meta.total_count = extra;
+          sendJSON(res, contents);
+        });
+        return;
+      }
+
+      sendJSON(res, contents);
     })
   });
   

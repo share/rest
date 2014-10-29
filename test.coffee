@@ -300,8 +300,9 @@ describe 'rest', ->
       fetch 'GET', @port, "/doc/#{@collection}", null, (res, data, headers) =>
         assert.strictEqual res.statusCode, 200
         assert.strictEqual headers['content-type'], 'application/json'
-        docNames = data.map (doc)-> doc.docName
+        docNames = data.objects.map (doc)-> doc.docName
         assert.deepEqual docNames, ['iphone6', 'iphone6plus', 'iphone5s', 'iphone5c']
+        assert.deepEqual data.meta, {limit: null, offset: 0, total_count: 4}
         done()
 
     it 'returns 400 if invalid JSON in q option', (done) ->
@@ -323,8 +324,9 @@ describe 'rest', ->
       fetch 'GET', @port, "/doc/#{@collection}?q=#{query}", null, (res, data, headers) =>
         assert.strictEqual res.statusCode, 200
         assert.strictEqual headers['content-type'], 'application/json'
-        docNames = data.map (doc)-> doc.docName
+        docNames = data.objects.map (doc)-> doc.docName
         assert.deepEqual docNames, ['iphone6', 'iphone6plus']
+        assert.deepEqual data.meta, {limit: null, offset: 0, total_count: 2}
         done()
 
     it 'returns sorted list of documents', (done) ->
@@ -334,8 +336,9 @@ describe 'rest', ->
       fetch 'GET', @port, "/doc/#{@collection}?s=#{sort}", null, (res, data, headers) =>
         assert.strictEqual res.statusCode, 200
         assert.strictEqual headers['content-type'], 'application/json'
-        docNames = data.map (doc)-> doc.docName
+        docNames = data.objects.map (doc)-> doc.docName
         assert.deepEqual docNames, ['iphone5c', 'iphone5s', 'iphone6', 'iphone6plus']
+        assert.deepEqual data.meta, {limit: null, offset: 0, total_count: 4}
         done()
 
     it 'returns limited list of documents, with skip', (done) ->
@@ -345,8 +348,9 @@ describe 'rest', ->
       fetch 'GET', @port, "/doc/#{@collection}?s=#{sort}&sk=1&l=3", null, (res, data, headers) =>
         assert.strictEqual res.statusCode, 200
         assert.strictEqual headers['content-type'], 'application/json'
-        docNames = data.map (doc)-> doc.docName
+        docNames = data.objects.map (doc)-> doc.docName
         assert.deepEqual docNames, ['iphone5s', 'iphone6', 'iphone6plus']
+        assert.deepEqual data.meta, {limit: 3, offset: 1, total_count: 4}
         done()
 
     it 'returns count of documents', (done) ->
@@ -355,5 +359,6 @@ describe 'rest', ->
       fetch 'GET', @port, "/doc/#{@collection}?c=true", null, (res, data, headers) =>
         assert.strictEqual res.statusCode, 200
         assert.strictEqual headers['content-type'], 'application/json'
-        assert.equal data, '4'
+        assert.deepEqual data.meta, {limit: null, offset: 0, total_count: 4}
+        assert.equal data.objects, undefined
         done()
