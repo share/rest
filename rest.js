@@ -130,6 +130,89 @@ module.exports = function(backend) {
       }
     }
   });
+
+  // Get list of documents.
+  // interface similar to mongolab - http://docs.mongolab.com/restapi/#list-documents
+  // - q=<query> - restrict results by the specified JSON query
+  // - c=true - return the result count for this query
+  // - s=<sort order> - specify the order in which to sort each specified field (1- ascending; -1 - descending)
+  // - sk=<num results to skip> - specify the number of results to skip in the result set; useful for paging
+  // - l=<limit> - specify the limit for the number of results
+  router.get('/:cName', function(req, res, next) {
+    var query = url.parse(req.url, true).query;
+
+    // build fetch query object
+    var fetchQuery = {};
+    if (query.q) {
+      try {
+        fetchQuery = JSON.parse(query.q);
+      } catch (e) {
+        return send400(res, 'Cannot parse "q" option: invalid JSON');
+      }
+    }
+
+    // sort
+    if (query.s) {
+      try {
+        fetchQuery.$orderby = JSON.parse(query.s);
+      } catch (e) {
+        return send400(res, 'Cannot parse "s" option: invalid JSON');
+      }
+    }
+
+    // limit & skip
+    if (query.sk) fetchQuery.$skip = parseInt(query.sk, 10);
+    if (query.l) fetchQuery.$limit = parseInt(query.l, 10);
+
+    // count
+    if (query.c == 'true') fetchQuery.$count = true;
+
+    var fetchOptions = {docMode: 'fetch'};
+    var cName = req.params.cName;
+    req._shareAgent.queryFetch(cName, fetchQuery, fetchOptions, function(err, results, extra) {
+      if (err) {
+        if (req.method === "HEAD") {
+          sendError(res, err, true);
+        } else {
+          sendError(res, err);
+        }
+        return;
+      }
+
+      // If not GET request, presume HEAD request
+      if (req.method !== 'GET') {
+        send200(res, '');
+        return;
+      }
+
+      var contents = {
+        meta: {
+          limit: fetchQuery.$limit || null,
+          offset: fetchQuery.$skip || 0,
+          total_count: extra || results.length
+        }
+      };
+
+      // return only meta
+      if (query.c) {
+        sendJSON(res, contents);
+        return;
+      } else {
+        contents.objects = results;
+      }
+
+      if (fetchQuery.$limit || fetchQuery.$skip) {
+        fetchQuery.$count = true;
+        req._shareAgent.queryFetch(cName, fetchQuery, fetchOptions, function(err, results, extra) {
+          contents.meta.total_count = extra;
+          sendJSON(res, contents);
+        });
+        return;
+      }
+
+      sendJSON(res, contents);
+    })
+  });
   
   // GET returns the document snapshot. The version and type are sent as headers.
   // I'm not sure what to do with document metadata - it is inaccessable for now.

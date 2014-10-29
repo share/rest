@@ -11,7 +11,8 @@
     "mocha": "^1.20.1",
     "livedb": "^0.4.4",
     "ot-text": "^1.0.1",
-    "ot-simple": "^1.0.0"
+    "ot-simple": "^1.0.0",
+    "livedb-middleware": "letmetravel/middleware"
   },
   "scripts": {
     "test": "mocha --compilers coffee:coffee-script/register --reporter spec test.coffee"
